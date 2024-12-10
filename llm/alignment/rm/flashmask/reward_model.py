@@ -161,8 +161,8 @@ class LlamaModelForProcessScore(LlamaPretrainedModel):
         super().__init__(config)
         self.llama = LlamaForCausalLM(config)
         self.loss = nn.CrossEntropyLoss()
-        self.placeholder_token_id = placeholder_token_id  # TODO
-        self.reward_token_ids = reward_token_ids  # TODO
+        self.placeholder_token_id = placeholder_token_id
+        self.reward_token_ids = reward_token_ids
 
     def get_input_embeddings(self) -> nn.Embedding:
         return self.llama.embed_tokens
@@ -196,10 +196,10 @@ class LlamaModelForProcessScore(LlamaPretrainedModel):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        return_dict = True  # TODO: tmp fix
 
         outputs = self.llama(
             input_ids=input_ids,
+            labels=labels,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -215,24 +215,24 @@ class LlamaModelForProcessScore(LlamaPretrainedModel):
         if return_dict:
             logits = outputs.logits
         elif labels is not None:
-            # TODO: bug here
+            # import pdb; pdb.set_trace()
             logits = outputs[1]
         else:
             logits = outputs[0]
-
+        # breakpoint()
         logits = logits[placeholder_mask]
         labels = labels[placeholder_mask]
-
+        # breakpoint()
         logits = logits[..., self.reward_token_ids]
         for idx, token in enumerate(self.reward_token_ids):
             labels = paddle.where(labels == token, idx, labels)
 
         loss = self.loss(logits, labels)
-
+        # breakpoint()
         if labels.dtype == logits.dtype:
             labels = labels.argmax(dim=-1)
         acc = (logits.argmax(axis=-1) == labels).astype('float32').mean()
-        
+        # breakpoint()
         return loss, acc
 
 

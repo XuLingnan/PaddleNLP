@@ -259,10 +259,11 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
     #     label_token_ids, dtype=input_ids.dtype
     # )
     # labels= paddle.where(input_ids == placeholder_token_id, paddle.to_tensor(label_token_ids, dtype=input_ids.dtype), labels)
+    # breakpoint()
     indices = paddle.nonzero(input_ids == placeholder_token_id).flatten()
     for idx, replacement_value in zip(indices, label_token_ids):
         labels[idx] = replacement_value
-
+    # breakpoint()
     prompt_len, seq_len = (
         len(prompt_token_ids),
         len(input_ids)
