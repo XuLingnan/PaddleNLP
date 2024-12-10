@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import numpy as np
+import paddle
 
 
 def check_preference_data(data):
@@ -34,7 +35,7 @@ def check_preference_data(data):
             )
         )
     if len(data["response"][0]) == 0 or len(data["response"][1]) == 0:
-        raise ValueError("The response should not be empty, buut got {data}.")
+        raise ValueError(f"The response should not be empty, buut got {data}.")
     if data["sort"][0] == data["sort"][1]:
         raise ValueError("The two sort should be different.")
 
@@ -163,3 +164,186 @@ def preference_collate_fn(batch, max_seq_len=None):
         else:
             input_dict[key] = np.array(input_dict[key])
     return input_dict
+
+
+def check_process_data(data):
+    """
+    "src" : ["prompt"],
+    "tgt" : [],
+    "responses" : ["step_1", ..., "step_k"]
+    "labels" : ["label_1", ..., "label_k"]
+    """
+
+    if isinstance(data["src"], str):
+        data["src"] = [data["src"]]
+    if isinstance(data["tgt"], str):
+        data["tgt"] = [data["tgt"]]
+    if len(data["src"]) != len(data["tgt"]) + 1:
+        raise ValueError(
+            "The number of src and tgt should differ by 1, but got {} and {}".format(
+                len(data["src"]), len(data["tgt"])
+            )
+        )
+    if len(data["responses"]) != len(data["labels"]):
+        raise ValueError(
+            "The number of responses and labels should be equal, but got {} and {}".format(
+                len(data["responses"]), len(data["labels"])
+            )
+        )
+    if "" in data["responses"] or "" in data["labels"]:
+        raise ValueError(f"Any step in the responses or labels should not be empty, but got {data}.")
+
+    return data
+
+
+def preprocess_process_data(data, tokenizer, data_args, model_args):
+    """Convert raw format example to Example."""
+    # Check data format
+    data = check_process_data(data)
+    # print(data)
+
+    placeholder_token_id = tokenizer(model_args.placeholder_token)["input_ids"]
+    if len(placeholder_token_id) != 1:
+        raise ValueError(
+            f"The length of placeholder_token_id should be 1, but got {len(placeholder_token_id)}."
+        )
+    placeholder_token_id = placeholder_token_id[0]
+
+    prompt_token_ids = tokenizer(data["src"][-1], add_special_tokens=True)["input_ids"]
+    for idx in range(len(data["tgt"])):
+        src_token_ids = tokenizer(data["src"][-idx - 1], add_special_tokens=True)["input_ids"]
+        tgt_token_ids = tokenizer(data["tgt"][-idx])["input_ids"] + [tokenizer.eos_token_id]
+        prompt_token_ids = src_token_ids + tgt_token_ids + prompt_token_ids
+    
+    # TODO:
+    response_token_ids = tokenizer(
+        model_args.placeholder_token.join(
+            # [" "+local_data+" " if idx==0 else local_data+" " for idx, local_data in enumerate(data["responses"])]
+            data["responses"]
+        ) + model_args.placeholder_token,
+        add_special_tokens=True,
+    )["input_ids"]
+    # print(repr(
+    #     model_args.placeholder_token.join(
+    #         # [" "+local_data+" " if idx!=0 else local_data+" " for idx, local_data in enumerate(data["responses"])]
+    #         data["responses"]
+    #     ) + model_args.placeholder_token
+    # ))
+
+    # 处理截断，TODO: 截断后的最后一个step可能不完整，同时也不会预测分类
+    if len(prompt_token_ids) + len(response_token_ids) > data_args.max_seq_len:
+        prompt_token_ids = prompt_token_ids[-data_args.max_prompt_len:]
+        if len(prompt_token_ids) + len(response_token_ids) > data_args.max_seq_len:
+            max_response_len = data_args.max_seq_len - len(prompt_token_ids)
+            response_token_ids = response_token_ids[-max_response_len:]
+
+    input_ids = paddle.to_tensor(prompt_token_ids + response_token_ids)
+
+    # input_ids_list = input_ids.numpy().tolist()
+    # tokens = tokenizer.convert_ids_to_tokens(input_ids_list)
+    # for id, tk in zip(input_ids_list, tokens):
+    #     print(id, tk)
+    # print(placeholder_token_id, model_args.placeholder_token)
+
+    label_token_ids = []
+    for local_label in data["labels"]:
+        if local_label not in model_args.reward_tokens:
+            raise ValueError(
+                f"The label {local_label} should be in reward tokens {model_args.reward_tokens}, got {data}."
+            )
+        label_token_ids.append(tokenizer(local_label)["input_ids"][0])
+    labels = paddle.full_like(input_ids, -100, dtype=input_ids.dtype)
+    # print(paddle.sum(input_ids == placeholder_token_id).item())
+    # print(len(label_token_ids), label_token_ids[0])
+    # labels[input_ids == placeholder_token_id] = paddle.to_tensor(
+    #     label_token_ids, dtype=input_ids.dtype
+    # )
+    # labels= paddle.where(input_ids == placeholder_token_id, paddle.to_tensor(label_token_ids, dtype=input_ids.dtype), labels)
+    indices = paddle.nonzero(input_ids == placeholder_token_id).flatten()
+    for idx, replacement_value in zip(indices, label_token_ids):
+        labels[idx] = replacement_value
+
+    prompt_len, seq_len = (
+        len(prompt_token_ids),
+        len(input_ids)
+    )
+    position_ids = (
+        list(range(prompt_len)) + list(range(prompt_len, seq_len))
+    )
+    # response_indexs = [seq_len - 1]
+
+    output_dict = {
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+        "labels": labels,
+    }
+
+    # attention mask  TODO: check
+    if model_args.flash_mask:
+        output_dict["attn_mask_startend_row_indices"] = ([seq_len] * prompt_len)
+    else:
+        attention_mask = np.tri(seq_len, seq_len, dtype=bool)
+        output_dict["attention_mask"] = attention_mask
+
+    return output_dict
+
+
+def process_collate_fn(batch, max_seq_len=None):
+    """Convert batch data into tensor."""
+    if max_seq_len is None:
+        raise ValueError("max_seq_len is None.")
+
+    input_dict = {
+        "input_ids": [],
+        "position_ids": [],
+        "labels": [],
+    }
+    sequence = batch[0]
+    if "attn_mask_startend_row_indices" in sequence:
+        input_dict["attn_mask_startend_row_indices"] = []
+        use_attn_mask_startend_row_indices = True
+    elif "attention_mask" in sequence:
+        input_dict["attention_mask"] = []
+        use_attn_mask_startend_row_indices = False
+    else:
+        raise ValueError("attention_mask and attn_mask_startend_row_indices are both None.")
+
+    for i, sequence in enumerate(batch):
+        difference = max_seq_len - len(sequence["input_ids"])
+
+        input_dict["input_ids"].append(sequence["input_ids"] + [0] * difference)
+        input_dict["position_ids"].append(sequence["position_ids"] + [0] * difference)
+        input_dict["labels"].append(sequence["labels"] + [-100] * difference)
+        if use_attn_mask_startend_row_indices:
+            input_dict["attn_mask_startend_row_indices"].append(
+                [
+                    sequence["attn_mask_startend_row_indices"]
+                    + [sequence["attn_mask_startend_row_indices"][-1]] * difference
+                ]
+            )
+        else:
+            input_dict["attention_mask"].append(
+                np.pad(
+                    sequence["attention_mask"],
+                    pad_width=((0, 0), (0, difference), (0, difference)),
+                    mode="constant",
+                    constant_values=False,
+                )
+            )
+
+        # for ri in sequence["response_indexs"]:
+        #     input_dict["response_indexs"].append(
+        #         [
+        #             i,  # bs
+        #             ri[0],  # reasoning steps
+        #         ]
+        #     )
+    for key in input_dict:
+        if key == "attention_mask":
+            input_dict[key] = np.array(input_dict[key], dtype=bool)
+        elif key == "attn_mask_startend_row_indices":
+            input_dict[key] = np.array(input_dict[key], dtype=np.int32)
+        else:
+            input_dict[key] = np.array(input_dict[key])
+    return input_dict
+

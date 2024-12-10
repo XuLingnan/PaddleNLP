@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List
 
 import paddle
 import paddle.nn.functional as F
@@ -30,6 +30,7 @@ except:
 import paddlenlp
 from paddlenlp.transformers import (
     LlamaConfig,
+    LlamaForCausalLM,
     LlamaModel,
     LlamaPretrainedModel,
     PretrainedConfig,
@@ -153,4 +154,130 @@ class LlamaModelForScore(LlamaPretrainedModel):
         return mappings
 
 
+class LlamaModelForProcessScore(LlamaPretrainedModel):
+    _keys_to_ignore_on_load_missing = ["lm_head.weight"]
+
+    def __init__(self, config: PretrainedConfig, placeholder_token_id: int, reward_token_ids: List, **kwargs: Any) -> None:
+        super().__init__(config)
+        self.llama = LlamaForCausalLM(config)
+        self.loss = nn.CrossEntropyLoss()
+        self.placeholder_token_id = placeholder_token_id  # TODO
+        self.reward_token_ids = reward_token_ids  # TODO
+
+    def get_input_embeddings(self) -> nn.Embedding:
+        return self.llama.embed_tokens
+
+    def set_input_embeddings(self, value: nn.Embedding) -> None:
+        self.llama.embed_tokens = value
+
+    def get_decoder(self) -> PretrainedModel:
+        return self.llama
+
+    def set_decoder(self, decoder: PretrainedModel) -> None:
+        self.llama = decoder
+
+    def forward(  # pylint: disable=too-many-arguments
+        self,
+        input_ids: paddle.Tensor,
+        labels: paddle.Tensor,
+        attention_mask: paddle.Tensor | None = None,
+        position_ids: paddle.Tensor | None = None,
+        past_key_values: list[paddle.Tensor] | None = None,
+        inputs_embeds: paddle.Tensor | None = None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+        attn_mask_startend_row_indices: paddle.Tensor | None = None,
+        # response_indexs: paddle.Tensor | None = None,
+    ):
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = True  # TODO: tmp fix
+
+        outputs = self.llama(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            attn_mask_startend_row_indices=attn_mask_startend_row_indices,
+        )
+        
+        placeholder_mask = input_ids == self.placeholder_token_id
+        if return_dict:
+            logits = outputs.logits
+        elif labels is not None:
+            # TODO: bug here
+            logits = outputs[1]
+        else:
+            logits = outputs[0]
+
+        logits = logits[placeholder_mask]
+        labels = labels[placeholder_mask]
+
+        logits = logits[..., self.reward_token_ids]
+        for idx, token in enumerate(self.reward_token_ids):
+            labels = paddle.where(labels == token, idx, labels)
+
+        loss = self.loss(logits, labels)
+
+        if labels.dtype == logits.dtype:
+            labels = labels.argmax(dim=-1)
+        acc = (logits.argmax(axis=-1) == labels).astype('float32').mean()
+        
+        return loss, acc
+
+
+    @classmethod
+    def _get_name_mappings(cls, config: LlamaConfig) -> list[StateDictNameMapping]:
+        mappings: list[StateDictNameMapping] = []
+        model_mappings = [
+            ["embed_tokens.weight"],
+            ["norm.weight"],
+        ]
+        for layer_index in range(config.num_hidden_layers):
+            layer_mappings = [
+                [f"layers.{layer_index}.self_attn.q_proj.weight", None, "transpose"],
+                [f"layers.{layer_index}.self_attn.k_proj.weight", None, "transpose"],
+                [f"layers.{layer_index}.self_attn.v_proj.weight", None, "transpose"],
+                [f"layers.{layer_index}.self_attn.o_proj.weight", None, "transpose"],
+                [f"layers.{layer_index}.self_attn.rotary_emb.inv_freq"],
+                [f"layers.{layer_index}.mlp.gate_proj.weight", None, "transpose"],
+                [f"layers.{layer_index}.mlp.down_proj.weight", None, "transpose"],
+                [f"layers.{layer_index}.mlp.up_proj.weight", None, "transpose"],
+                [f"layers.{layer_index}.input_layernorm.weight"],
+                [f"layers.{layer_index}.post_attention_layernorm.weight"],
+            ]
+            model_mappings.extend(layer_mappings)
+
+        init_name_mappings(mappings=model_mappings)
+        # base-model prefix "LlamaModel"
+        if "LlamaModel" not in config.architectures:
+            for mapping in model_mappings:
+                mapping[0] = "model." + mapping[0]
+                mapping[1] = "llama." + mapping[1]
+            model_mappings.append(["lm_head.weight", "lm_head.weight", "transpose"])
+            model_mappings.extend(
+                [
+                    ["score_head.weight", "score_head.weight", "transpose"],
+                    ["normalizer.var", "normalizer.var"],
+                    ["normalizer.mean", "normalizer.mean"],
+                    ["normalizer.count", "normalizer.count"],
+                ]
+            )
+
+        mappings = [StateDictNameMapping(*mapping, index=index) for index, mapping in enumerate(model_mappings)]
+        return mappings
+
+
 paddlenlp.transformers.LlamaModelForScore = LlamaModelForScore
+paddlenlp.transformers.LlamaModelForProcessScore = LlamaModelForProcessScore
+

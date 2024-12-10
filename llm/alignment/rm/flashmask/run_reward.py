@@ -19,9 +19,12 @@ import sys
 from functools import partial
 
 import paddle
-from data import preference_collate_fn, preprocess_preference_data
+from data import (
+    preference_collate_fn, preprocess_preference_data, 
+    process_collate_fn, preprocess_process_data
+)
 from reward_argument import DataArgument, ModelArgument, TrainingArguments
-from reward_model import LlamaModelForScore
+from reward_model import LlamaModelForScore, LlamaModelForProcessScore
 from reward_trainer import RewardTrainer
 
 from paddlenlp.datasets import (
@@ -103,7 +106,18 @@ def main():
         if training_args.bf16:
             dtype = "bfloat16"
 
-    logger.info("Start to load model & tokenizer.")
+    logger.info("Start to load tokenizer & model.")
+    if model_args.tokenizer_name_or_path is not None:
+        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name_or_path)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+
+    # TODO: Adding unknown special tokens is not supported
+    # if training_args.process_reward:
+    #     tokenizer.add_special_tokens({
+    #         'additional_special_tokens': [model_args.placeholder_token] + model_args.reward_tokens,
+    #     })
+
     model_kwargs = dict(
         pretrained_model_name_or_path=model_args.model_name_or_path,
         dtype=dtype,
@@ -113,14 +127,23 @@ def main():
         use_flash_attention=model_args.use_flash_attention,
         seq_length=data_args.max_seq_len,
     )
+    if training_args.process_reward:
+        model_kwargs["placeholder_token_id"] = tokenizer(model_args.placeholder_token)["input_ids"][0]
+        model_kwargs["reward_token_ids"] = [tokenizer(local_tk)["input_ids"][0] for local_tk in model_args.reward_tokens]
     if training_args.pipeline_parallel_degree > 1:
         raise ValueError("RM does not support pipeline parallelism yet.")
 
     if not data_args.autotuner_benchmark:
-        model = LlamaModelForScore.from_pretrained(**model_kwargs)
+        if training_args.process_reward:
+            model = LlamaModelForProcessScore.from_pretrained(**model_kwargs)
+        else:
+            model = LlamaModelForScore.from_pretrained(**model_kwargs)
     else:
         config = AutoConfig.from_pretrained(**model_kwargs)
-        model = LlamaModelForScore.from_config(config)
+        if training_args.process_reward:
+            model = LlamaModelForProcessScore.from_config(config)
+        else:
+            model = LlamaModelForScore.from_config(config)
 
     if model_args.flash_mask and not model.config.use_flash_attention:
         logger.warning("`flash_mask` must use with zero padding and flash attention.")
@@ -130,16 +153,16 @@ def main():
         register_sequence_parallel_allreduce_hooks(
             model, training_args.gradient_accumulation_steps, training_args.fuse_sequence_parallel_allreduce
         )
-    if model_args.tokenizer_name_or_path is not None:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name_or_path)
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+
     # TODO: support chat template in next pr
     # tokenizer.chat_template = None
-    logger.info("Loading model & tokenizer successfully !")
+    logger.info("Loading tokenizer & model successfully !")
 
     logger.info("Start to create dataset")
-    trans_func = partial(preprocess_preference_data, tokenizer=tokenizer, data_args=data_args, model_args=model_args)
+    if training_args.process_reward:
+        trans_func = partial(preprocess_process_data, tokenizer=tokenizer, data_args=data_args, model_args=model_args)
+    else:
+        trans_func = partial(preprocess_preference_data, tokenizer=tokenizer, data_args=data_args, model_args=model_args)
     if data_args.lazy:
         zero_padding_dataset = ZeroPaddingIterableDataset
     else:
@@ -191,9 +214,10 @@ def main():
         eval_dataset=eval_ds,
         tokenizer=tokenizer,
         data_collator=partial(
-            preference_collate_fn,
+            preference_collate_fn if not training_args.process_reward else process_collate_fn,
             max_seq_len=data_args.max_seq_len,
         ),
+        process_reward=training_args.process_reward,
     )
 
     if training_args.do_train:
