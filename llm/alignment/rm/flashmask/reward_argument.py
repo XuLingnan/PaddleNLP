@@ -63,6 +63,10 @@ class DataArgument:
         default=False,
         metadata={"help": "Whether to run benchmark by autotuner. True for from_scratch."},
     )
+    zero_padding: bool = field(
+        default=True,
+        metadata={"help": "Whether to use Zero Padding data stream."},
+    )
     greedy_zero_padding: bool = field(
         default=False,
         metadata={"help": "Whether to use Greedy Zero Padding data stream."},

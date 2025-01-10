@@ -106,7 +106,7 @@ def preprocess_preference_data(data, tokenizer, data_args, model_args):
     return output_dict
 
 
-def preference_collate_fn(batch, max_seq_len=None):
+def preference_collate_fn(batch, max_seq_len=None, pad_token_id=0):
     """Convert batch data into tensor."""
     if max_seq_len is None:
         raise ValueError("max_seq_len is None.")
@@ -129,8 +129,8 @@ def preference_collate_fn(batch, max_seq_len=None):
     for i, sequence in enumerate(batch):
         difference = max_seq_len - len(sequence["input_ids"])
 
-        input_dict["input_ids"].append(sequence["input_ids"] + [0] * difference)
-        input_dict["position_ids"].append(sequence["position_ids"] + [0] * difference)
+        input_dict["input_ids"].append(sequence["input_ids"] + [pad_token_id] * difference)
+        input_dict["position_ids"].append(sequence["position_ids"] + [pad_token_id] * difference)
         if use_attn_mask_startend_row_indices:
             input_dict["attn_mask_startend_row_indices"].append(
                 [
@@ -200,35 +200,23 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
     """Convert raw format example to Example."""
     # Check data format
     data = check_process_data(data)
-    # print(data)
 
     placeholder_token_id = tokenizer(model_args.placeholder_token)["input_ids"]
-    if len(placeholder_token_id) != 1:
-        raise ValueError(
-            f"The length of placeholder_token_id should be 1, but got {len(placeholder_token_id)}."
-        )
-    placeholder_token_id = placeholder_token_id[0]
 
-    prompt_token_ids = tokenizer(data["src"][-1], add_special_tokens=True)["input_ids"]
+    placeholder_token_id = placeholder_token_id[-1]
+
+    prompt_token_ids = tokenizer(data["src"][-1], add_special_tokens=False)["input_ids"]
     for idx in range(len(data["tgt"])):
-        src_token_ids = tokenizer(data["src"][-idx - 1], add_special_tokens=True)["input_ids"]
-        tgt_token_ids = tokenizer(data["tgt"][-idx])["input_ids"] + [tokenizer.eos_token_id]
+        src_token_ids = tokenizer(data["src"][-idx - 1], add_special_tokens=False)["input_ids"]
+        tgt_token_ids = tokenizer(data["tgt"][-idx], add_special_tokens=False)["input_ids"] + [tokenizer.eos_token_id]
         prompt_token_ids = src_token_ids + tgt_token_ids + prompt_token_ids
     
-    # TODO:
     response_token_ids = tokenizer(
-        model_args.placeholder_token.join(
-            # [" "+local_data+" " if idx==0 else local_data+" " for idx, local_data in enumerate(data["responses"])]
+        f" {model_args.placeholder_token}\n".join(
             data["responses"]
-        ) + model_args.placeholder_token,
-        add_special_tokens=True,
+        ) + f" {model_args.placeholder_token}",
+        add_special_tokens=False,
     )["input_ids"]
-    # print(repr(
-    #     model_args.placeholder_token.join(
-    #         # [" "+local_data+" " if idx!=0 else local_data+" " for idx, local_data in enumerate(data["responses"])]
-    #         data["responses"]
-    #     ) + model_args.placeholder_token
-    # ))
 
     # 处理截断，TODO: 截断后的最后一个step可能不完整，同时也不会预测分类
     if len(prompt_token_ids) + len(response_token_ids) > data_args.max_seq_len:
@@ -239,31 +227,19 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
 
     input_ids = paddle.to_tensor(prompt_token_ids + response_token_ids)
 
-    # input_ids_list = input_ids.numpy().tolist()
-    # tokens = tokenizer.convert_ids_to_tokens(input_ids_list)
-    # for id, tk in zip(input_ids_list, tokens):
-    #     print(id, tk)
-    # print(placeholder_token_id, model_args.placeholder_token)
-
     label_token_ids = []
     for local_label in data["labels"]:
         if local_label not in model_args.reward_tokens:
             raise ValueError(
                 f"The label {local_label} should be in reward tokens {model_args.reward_tokens}, got {data}."
             )
-        label_token_ids.append(tokenizer(local_label)["input_ids"][0])
+        label_token_ids.append(tokenizer(local_label)["input_ids"][-1])
     labels = paddle.full_like(input_ids, -100, dtype=input_ids.dtype)
-    # print(paddle.sum(input_ids == placeholder_token_id).item())
-    # print(len(label_token_ids), label_token_ids[0])
-    # labels[input_ids == placeholder_token_id] = paddle.to_tensor(
-    #     label_token_ids, dtype=input_ids.dtype
-    # )
-    # labels= paddle.where(input_ids == placeholder_token_id, paddle.to_tensor(label_token_ids, dtype=input_ids.dtype), labels)
-    # breakpoint()
+
     indices = paddle.nonzero(input_ids == placeholder_token_id).flatten()
     for idx, replacement_value in zip(indices, label_token_ids):
         labels[idx] = replacement_value
-    # breakpoint()
+
     prompt_len, seq_len = (
         len(prompt_token_ids),
         len(input_ids)
@@ -271,7 +247,6 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
     position_ids = (
         list(range(prompt_len)) + list(range(prompt_len, seq_len))
     )
-    # response_indexs = [seq_len - 1]
 
     output_dict = {
         "input_ids": input_ids,
@@ -279,17 +254,16 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
         "labels": labels,
     }
 
-    # attention mask  TODO: check
     if model_args.flash_mask:
         output_dict["attn_mask_startend_row_indices"] = ([seq_len] * prompt_len)
     else:
-        attention_mask = np.tri(seq_len, seq_len, dtype=bool)
+        attention_mask = np.ones((seq_len, seq_len), dtype=bool)
         output_dict["attention_mask"] = attention_mask
 
     return output_dict
 
 
-def process_collate_fn(batch, max_seq_len=None):
+def zero_padding_process_collate_fn(batch, max_seq_len=None, pad_token_id=0):
     """Convert batch data into tensor."""
     if max_seq_len is None:
         raise ValueError("max_seq_len is None.")
@@ -312,8 +286,8 @@ def process_collate_fn(batch, max_seq_len=None):
     for i, sequence in enumerate(batch):
         difference = max_seq_len - len(sequence["input_ids"])
 
-        input_dict["input_ids"].append(sequence["input_ids"] + [0] * difference)
-        input_dict["position_ids"].append(sequence["position_ids"] + [0] * difference)
+        input_dict["input_ids"].append(sequence["input_ids"] + [pad_token_id] * difference)
+        input_dict["position_ids"].append(sequence["position_ids"] + [pad_token_id] * difference)
         input_dict["labels"].append(sequence["labels"] + [-100] * difference)
         if use_attn_mask_startend_row_indices:
             input_dict["attn_mask_startend_row_indices"].append(
@@ -332,13 +306,59 @@ def process_collate_fn(batch, max_seq_len=None):
                 )
             )
 
-        # for ri in sequence["response_indexs"]:
-        #     input_dict["response_indexs"].append(
-        #         [
-        #             i,  # bs
-        #             ri[0],  # reasoning steps
-        #         ]
-        #     )
+    for key in input_dict:
+        if key == "attention_mask":
+            input_dict[key] = np.array(input_dict[key], dtype=bool)
+        elif key == "attn_mask_startend_row_indices":
+            input_dict[key] = np.array(input_dict[key], dtype=np.int32)
+        else:
+            input_dict[key] = np.array(input_dict[key])
+    return input_dict
+
+
+def process_collate_fn(batch, pad_token_id=0):
+    """Convert batch data into tensor."""
+    max_seq_len = max([len(sequence["input_ids"]) for sequence in batch])
+
+    input_dict = {
+        "input_ids": [],
+        "position_ids": [],
+        "labels": [],
+    }
+    sequence = batch[0]
+    if "attn_mask_startend_row_indices" in sequence:
+        input_dict["attn_mask_startend_row_indices"] = []
+        use_attn_mask_startend_row_indices = True
+    elif "attention_mask" in sequence:
+        input_dict["attention_mask"] = []
+        use_attn_mask_startend_row_indices = False
+    else:
+        raise ValueError("attention_mask and attn_mask_startend_row_indices are both None.")
+
+    for i, sequence in enumerate(batch):
+        difference = max_seq_len - len(sequence["input_ids"])
+        
+        # input_ids: Tensor(seqL, ); position_ids: list, len(seqL); labels: Tensor(seqL, )
+        input_dict["input_ids"].append(sequence["input_ids"].tolist() + [pad_token_id] * difference)
+        input_dict["position_ids"].append(sequence["position_ids"] + [pad_token_id] * difference)
+        input_dict["labels"].append(sequence["labels"].tolist() + [-100] * difference)
+        if use_attn_mask_startend_row_indices:
+            input_dict["attn_mask_startend_row_indices"].append(
+                [
+                    sequence["attn_mask_startend_row_indices"]
+                    + [sequence["attn_mask_startend_row_indices"][-1]] * difference
+                ]
+            )
+        else:
+            input_dict["attention_mask"].append(
+                np.pad(
+                    sequence["attention_mask"],
+                    pad_width=((0, difference), (0, difference)),
+                    mode="constant",
+                    constant_values=False,
+                )
+            )
+
     for key in input_dict:
         if key == "attention_mask":
             input_dict[key] = np.array(input_dict[key], dtype=bool)
