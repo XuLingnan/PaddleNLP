@@ -17,16 +17,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from paddlenlp.trainer import TrainingArguments
-
-
-def add_start_docstrings(*docstr):
-    """Adds docstrings for a function."""
-
-    def docstring_decorator(fn):
-        fn.__doc__ = "".join(docstr) + (fn.__doc__ if fn.__doc__ is not None else "")
-        return fn
-
-    return docstring_decorator
+from paddlenlp.trainer.utils.doc import add_start_docstrings
 
 
 @dataclass
@@ -113,3 +104,4 @@ class ModelArgument:
         default_factory=lambda: ["+", "-"],
         metadata={"help": "reward_tokens"},
     )
+

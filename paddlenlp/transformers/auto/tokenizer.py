@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+import inspect
 import io
 import json
 import os
@@ -54,18 +55,40 @@ else:
                 ),
             ),
             ("blenderbot", "BlenderbotTokenizer"),
-            ("bloom", "BloomTokenizer"),
+            (
+                "bloom",
+                (
+                    "BloomTokenizer",
+                    "BloomTokenizerFast" if is_tokenizers_available() else None,
+                ),
+            ),
             ("clip", "CLIPTokenizer"),
             ("codegen", "CodeGenTokenizer"),
             ("convbert", "ConvBertTokenizer"),
             ("ctrl", "CTRLTokenizer"),
             ("distilbert", "DistilBertTokenizer"),
+            (
+                "deepseek_v2",
+                "DeepseekTokenizerFast" if is_tokenizers_available() else None,
+            ),
             ("electra", "ElectraTokenizer"),
-            ("ernie", "ErnieTokenizer"),
+            (
+                "ernie",
+                (
+                    "ErnieTokenizer",
+                    "ErnieTokenizerFast" if is_tokenizers_available() else None,
+                ),
+            ),
             ("ernie_m", "ErnieMTokenizer"),
             ("fnet", "FNetTokenizer"),
             ("funnel", "FunnelTokenizer"),
-            ("gemma", "GemmaTokenizer"),
+            (
+                "gemma",
+                (
+                    "GemmaTokenizer",
+                    "GemmaTokenizerFast" if is_tokenizers_available() else None,
+                ),
+            ),
             ("jamba", "JambaTokenizer"),
             ("layoutlm", "LayoutLMTokenizer"),
             ("layoutlmv2", "LayoutLMv2Tokenizer"),
@@ -93,6 +116,7 @@ else:
             ("squeezebert", "SqueezeBertTokenizer"),
             ("t5", "T5Tokenizer"),
             ("xlm", "XLMTokenizer"),
+            ("xlm_roberta", "XLMRobertaTokenizer"),
             ("xlnet", "XLNetTokenizer"),
             ("bert_japanese", "BertJapaneseTokenizer"),
             ("bigbird", "BigBirdTokenizer"),
@@ -114,14 +138,26 @@ else:
             ("tinybert", "TinyBertTokenizer"),
             ("unified_transformer", "UnifiedTransformerTokenizer"),
             ("unimo", "UNIMOTokenizer"),
-            ("gpt", (("GPTTokenizer", "GPTChineseTokenizer"), None)),
+            (
+                "gpt",
+                (
+                    ("GPTTokenizer", "GPTChineseTokenizer"),
+                    "GPTTokenizerFast" if is_tokenizers_available() else None,
+                ),
+            ),
             ("gau_alpha", "GAUAlphaTokenizer"),
             ("artist", "ArtistTokenizer"),
             ("chineseclip", "ChineseCLIPTokenizer"),
             ("ernie_vil", "ErnieViLTokenizer"),
             ("glm", "GLMGPT2Tokenizer"),
             ("qwen", "QWenTokenizer"),
-            ("qwen2", "Qwen2Tokenizer"),
+            (
+                "qwen2",
+                (
+                    "Qwen2Tokenizer",
+                    "Qwen2TokenizerFast" if is_tokenizers_available() else None,
+                ),
+            ),
             ("yuan", "YuanTokenizer"),
         ]
     )
@@ -147,7 +183,10 @@ def get_configurations():
     for class_name, values in TOKENIZER_MAPPING_NAMES.items():
         all_tokenizers = get_mapping_tokenizers(values, with_fast=False)
         for key in all_tokenizers:
-            import_class = importlib.import_module(f"paddlenlp.transformers.{class_name}.tokenizer")
+            try:
+                import_class = importlib.import_module(f"paddlenlp.transformers.{class_name}.tokenizer")
+            except ImportError:
+                import_class = importlib.import_module(f"paddlenlp.transformers.{class_name}.tokenizer_fast")
             tokenizer_name = getattr(import_class, key)
             name = tuple(tokenizer_name.pretrained_init_configuration.keys())
             MAPPING_NAMES[name] = tokenizer_name
@@ -178,7 +217,12 @@ def tokenizer_class_from_name(class_name: str):
 
                     return getattr(module, class_name)
                 except AttributeError:
-                    raise ValueError(f"Tokenizer class {class_name} is not currently imported.")
+                    try:
+                        module = importlib.import_module(f".{module_name}.tokenizer_fast", "paddlenlp.transformers")
+
+                        return getattr(module, class_name)
+                    except AttributeError:
+                        raise ValueError(f"Tokenizer class {class_name} is not currently imported.")
 
     for config, tokenizers in TOKENIZER_MAPPING._extra_content.items():
         for tokenizer in tokenizers:
@@ -446,7 +490,7 @@ class AutoTokenizer:
                 return tokenizer_class_fast.from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
             else:
                 if tokenizer_class_py is not None:
-                    if isinstance(tokenizer_class_py, str):
+                    if inspect.isclass(tokenizer_class_py):
                         return tokenizer_class_py.from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
                     else:
                         # Use the first tokenizer class in the list
@@ -467,7 +511,12 @@ class AutoTokenizer:
             "- or the correct path to a directory containing relevant tokenizer files.\n"
         )
 
-    def register(config_class, slow_tokenizer_class=None, fast_tokenizer_class=None, exist_ok=False):
+    def register(
+        config_class,
+        slow_tokenizer_class=None,
+        fast_tokenizer_class=None,
+        exist_ok=False,
+    ):
         """
         Register a new tokenizer in this mapping.
 
@@ -508,4 +557,8 @@ class AutoTokenizer:
             if fast_tokenizer_class is None:
                 fast_tokenizer_class = existing_fast
 
-        TOKENIZER_MAPPING.register(config_class, (slow_tokenizer_class, fast_tokenizer_class), exist_ok=exist_ok)
+        TOKENIZER_MAPPING.register(
+            config_class,
+            (slow_tokenizer_class, fast_tokenizer_class),
+            exist_ok=exist_ok,
+        )
