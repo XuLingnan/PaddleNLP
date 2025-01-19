@@ -151,9 +151,9 @@ def main():
 
     if not data_args.autotuner_benchmark:
         if training_args.process_reward:
-            if "Llama" in model_args.model_name_or_path:
+            if "llama" in model_args.model_name_or_path.lower():
                 model = LlamaModelForPRM.from_pretrained(**model_kwargs)
-            elif "Mistral" in model_args.model_name_or_path:
+            elif "mistral" in model_args.model_name_or_path.lower():
                 model = MistralModelForPRM.from_pretrained(**model_kwargs)
             else:
                 raise ValueError("PRM currently only supports Llama & Mistral models.")
@@ -162,9 +162,9 @@ def main():
     else:
         config = AutoConfig.from_pretrained(**model_kwargs)
         if training_args.process_reward:
-            if "Llama" in model_args.model_name_or_path:
+            if "llama" in model_args.model_name_or_path.lower():
                 model = LlamaModelForPRM.from_config(config)
-            elif "Mistral" in model_args.model_name_or_path:
+            elif "mistral" in model_args.model_name_or_path.lower():
                 model = MistralModelForPRM.from_config(config)
             else:
                 raise ValueError("PRM currently only supports Llama & Mistral models.")
