@@ -255,7 +255,7 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
     }
 
     if model_args.flash_mask:
-        output_dict["attn_mask_startend_row_indices"] = ([seq_len] * prompt_len)
+        output_dict["attn_mask_startend_row_indices"] = ([seq_len] * seq_len)
     else:
         attention_mask = np.ones((seq_len, seq_len), dtype=bool)
         output_dict["attention_mask"] = attention_mask
