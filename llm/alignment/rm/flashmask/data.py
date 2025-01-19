@@ -201,7 +201,7 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
     # Check data format
     data = check_process_data(data)
 
-    placeholder_token_id = tokenizer(model_args.placeholder_token)["input_ids"]
+    placeholder_token_id = tokenizer(model_args.placeholder_token, add_special_tokens=False)["input_ids"]
 
     placeholder_token_id = placeholder_token_id[-1]
 
@@ -233,7 +233,7 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
             raise ValueError(
                 f"The label {local_label} should be in reward tokens {model_args.reward_tokens}, got {data}."
             )
-        label_token_ids.append(tokenizer(local_label)["input_ids"][-1])
+        label_token_ids.append(tokenizer(local_label, add_special_tokens=False)["input_ids"][-1])
     labels = paddle.full_like(input_ids, -100, dtype=input_ids.dtype)
 
     indices = paddle.nonzero(input_ids == placeholder_token_id).flatten()

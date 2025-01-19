@@ -134,12 +134,12 @@ def main():
         seq_length=data_args.max_seq_len,
     )
     if training_args.process_reward:
-        placeholder_token_id = tokenizer(model_args.placeholder_token)["input_ids"]
+        placeholder_token_id = tokenizer(model_args.placeholder_token, add_special_tokens=False)["input_ids"]
         if len(placeholder_token_id) != 1:
             print(f"Warning: The length of placeholder_token_id should be 1, but got {len(placeholder_token_id)}. Using {placeholder_token_id[-1]}: {tokenizer.convert_ids_to_tokens([placeholder_token_id[-1]])} instead.")
         model_kwargs["placeholder_token_id"] = placeholder_token_id[-1]
         for local_tk in model_args.reward_tokens:
-            if len(tokenizer(local_tk)["input_ids"]) != 1:
+            if len(tokenizer(local_tk, add_special_tokens=False)["input_ids"]) != 1:
                 print(f"Warning: The length of reward_token_id should be 1, but got {len(tokenizer(local_tk)['input_ids'])}. Using {tokenizer(local_tk)['input_ids'][-1]}: {tokenizer.convert_ids_to_tokens([tokenizer(local_tk)['input_ids'][-1]])} instead.")
         model_kwargs["reward_token_ids"] = [tokenizer(local_tk)["input_ids"][-1] for local_tk in model_args.reward_tokens]
     if training_args.pipeline_parallel_degree > 1:
