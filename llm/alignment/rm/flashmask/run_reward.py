@@ -119,12 +119,6 @@ def main():
         else:
             tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 
-    # TODO: Adding unknown special tokens is not supported
-    # if training_args.process_reward:
-    #     tokenizer.add_special_tokens({
-    #         'additional_special_tokens': [model_args.placeholder_token] + model_args.reward_tokens,
-    #     })
-
     model_kwargs = dict(
         pretrained_model_name_or_path=model_args.model_name_or_path,
         dtype=dtype,

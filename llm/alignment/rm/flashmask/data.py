@@ -216,7 +216,8 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
         add_special_tokens=False,
     )["input_ids"]
 
-    # 处理截断，TODO: 截断后的最后一个step可能不完整，同时也不会预测分类
+    # NOTE: Truncation may leads to incompleteness of the last CoT step, howerver, the prm will not predict the
+    # corresponding reward either. So it is ok then.
     if len(prompt_token_ids) + len(response_token_ids) > data_args.max_seq_len:
         prompt_token_ids = prompt_token_ids[-data_args.max_prompt_len :]
         if len(prompt_token_ids) + len(response_token_ids) > data_args.max_seq_len:

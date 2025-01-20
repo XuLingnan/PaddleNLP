@@ -439,7 +439,7 @@ class MistralModelForPRM(MistralPreTrainedModel):
         logits = logits[placeholder_mask]
         labels = labels[placeholder_mask]
 
-        logits = logits[..., self.reward_token_ids]  # TODO: 暂时在这边取
+        logits = logits[..., self.reward_token_ids]
         for idx, token in enumerate(self.reward_token_ids):
             labels = paddle.where(labels == token, idx, labels)
 
