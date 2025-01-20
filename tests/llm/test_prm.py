@@ -47,4 +47,3 @@ class FinetuneTest(LLMTest, unittest.TestCase):
             from alignment.rm.flashmask.run_reward import main
 
             main()
-
