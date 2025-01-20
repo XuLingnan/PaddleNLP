@@ -4,7 +4,7 @@ prm:
     dev_dataset_path: "./tests/fixtures/llm/prm_data/dev.json"
     process_reward: 1
     placeholder_token: "ки"
-    # reward_tokens: ["+", "-"]
+    reward_tokens: "+,-"
     per_device_train_batch_size: 1
     gradient_accumulation_steps: 2
     per_device_eval_batch_size: 1

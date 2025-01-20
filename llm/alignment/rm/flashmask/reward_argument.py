@@ -14,7 +14,7 @@
 
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Optional
 
 from paddlenlp.trainer import TrainingArguments
 from paddlenlp.trainer.utils.doc import add_start_docstrings
@@ -35,7 +35,9 @@ class TrainingArguments(TrainingArguments):
         metadata={"help": "Configs to unify hybrid parallel checkpoint.\n"},
     )
 
-    process_reward: bool = field(default=False, metadata={"help": "Whether to use process reward(`True`) or outcome reward(`False`)."})
+    process_reward: bool = field(
+        default=False, metadata={"help": "Whether to use process reward(`True`) or outcome reward(`False`)."}
+    )
 
 
 @dataclass
@@ -92,16 +94,11 @@ class ModelArgument:
         default=1,
         metadata={"help": "virtual_pp_degree"},
     )
-    sequence_parallel: bool = field(
-        default=False,
-        metadata={"help": "whether to use sequence parallel"},
-    )
     placeholder_token: str = field(
         default="ки",
         metadata={"help": "placeholder_token"},
     )
-    reward_tokens: List[str] = field(
-        default_factory=lambda: ["+", "-"],
-        metadata={"help": "reward_tokens"},
+    reward_tokens: str = field(
+        default="+, -",
+        metadata={"help": "reward_tokens, string separated by comma."},
     )
-

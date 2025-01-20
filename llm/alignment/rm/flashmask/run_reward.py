@@ -19,18 +19,17 @@ import sys
 from functools import partial
 
 import paddle
-from data import (
-    preference_collate_fn, preprocess_preference_data, 
-    process_collate_fn, preprocess_process_data, zero_padding_process_collate_fn
-)
 from reward_argument import DataArgument, ModelArgument, TrainingArguments
-from reward_model import (
-    LlamaModelForScore, 
-    LlamaModelForPRM,
-    MistralModelForPRM,
-)
+from reward_model import LlamaModelForPRM, LlamaModelForScore, MistralModelForPRM
 from reward_trainer import RewardTrainer
 
+from data import (
+    preference_collate_fn,
+    preprocess_preference_data,
+    preprocess_process_data,
+    process_collate_fn,
+    zero_padding_process_collate_fn,
+)
 from paddlenlp.datasets import (
     ZeroPaddingIterableDataset,
     ZeroPaddingMapDataset,
@@ -53,6 +52,8 @@ def main():
         model_args, data_args, training_args = parser.parse_json_file_and_cmd_lines()
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    if model_args.reward_tokens is not None:
+        model_args.reward_tokens = model_args.reward_tokens.split(",")
 
     training_args.print_config(model_args, "Model")
     training_args.print_config(data_args, "Data")
@@ -116,7 +117,7 @@ def main():
             tokenizer.pad_token = tokenizer.eos_token
             tokenizer.pad_token_id = tokenizer.eos_token_id
         else:
-            tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+            tokenizer.add_special_tokens({"pad_token": "[PAD]"})
 
     # TODO: Adding unknown special tokens is not supported
     # if training_args.process_reward:
@@ -136,12 +137,18 @@ def main():
     if training_args.process_reward:
         placeholder_token_id = tokenizer(model_args.placeholder_token, add_special_tokens=False)["input_ids"]
         if len(placeholder_token_id) != 1:
-            print(f"Warning: The length of placeholder_token_id should be 1, but got {len(placeholder_token_id)}. Using {placeholder_token_id[-1]}: {tokenizer.convert_ids_to_tokens([placeholder_token_id[-1]])} instead.")
+            print(
+                f"Warning: The length of placeholder_token_id should be 1, but got {len(placeholder_token_id)}. Using {placeholder_token_id[-1]}: {tokenizer.convert_ids_to_tokens([placeholder_token_id[-1]])} instead."
+            )
         model_kwargs["placeholder_token_id"] = placeholder_token_id[-1]
         for local_tk in model_args.reward_tokens:
             if len(tokenizer(local_tk, add_special_tokens=False)["input_ids"]) != 1:
-                print(f"Warning: The length of reward_token_id should be 1, but got {len(tokenizer(local_tk)['input_ids'])}. Using {tokenizer(local_tk)['input_ids'][-1]}: {tokenizer.convert_ids_to_tokens([tokenizer(local_tk)['input_ids'][-1]])} instead.")
-        model_kwargs["reward_token_ids"] = [tokenizer(local_tk)["input_ids"][-1] for local_tk in model_args.reward_tokens]
+                print(
+                    f"Warning: The length of reward_token_id should be 1, but got {len(tokenizer(local_tk)['input_ids'])}. Using {tokenizer(local_tk)['input_ids'][-1]}: {tokenizer.convert_ids_to_tokens([tokenizer(local_tk)['input_ids'][-1]])} instead."
+                )
+        model_kwargs["reward_token_ids"] = [
+            tokenizer(local_tk)["input_ids"][-1] for local_tk in model_args.reward_tokens
+        ]
     if training_args.pipeline_parallel_degree > 1:
         raise ValueError("RM does not support pipeline parallelism yet.")
 
@@ -171,11 +178,6 @@ def main():
         logger.warning("`flash_mask` must use with zero padding and flash attention.")
         model.config.use_flash_attention = True
 
-    if model_args.sequence_parallel:
-        register_sequence_parallel_allreduce_hooks(
-            model, training_args.gradient_accumulation_steps, training_args.fuse_sequence_parallel_allreduce
-        )
-
     if model_args.tokenizer_name_or_path is not None:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name_or_path)
     else:
@@ -189,7 +191,9 @@ def main():
     if training_args.process_reward:
         trans_func = partial(preprocess_process_data, tokenizer=tokenizer, data_args=data_args, model_args=model_args)
     else:
-        trans_func = partial(preprocess_preference_data, tokenizer=tokenizer, data_args=data_args, model_args=model_args)
+        trans_func = partial(
+            preprocess_preference_data, tokenizer=tokenizer, data_args=data_args, model_args=model_args
+        )
 
     if data_args.zero_padding:
         if data_args.lazy:
@@ -248,7 +252,7 @@ def main():
             pad_token_id=tokenizer.pad_token_id,
         )
     else:
-        data_collator=partial(process_collate_fn, pad_token_id=tokenizer.pad_token_id)
+        data_collator = partial(process_collate_fn, pad_token_id=tokenizer.pad_token_id)
 
     trainer = RewardTrainer(
         model=model,
