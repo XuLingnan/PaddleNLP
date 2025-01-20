@@ -210,17 +210,15 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
         src_token_ids = tokenizer(data["src"][-idx - 1], add_special_tokens=False)["input_ids"]
         tgt_token_ids = tokenizer(data["tgt"][-idx], add_special_tokens=False)["input_ids"] + [tokenizer.eos_token_id]
         prompt_token_ids = src_token_ids + tgt_token_ids + prompt_token_ids
-    
+
     response_token_ids = tokenizer(
-        f" {model_args.placeholder_token}\n".join(
-            data["responses"]
-        ) + f" {model_args.placeholder_token}",
+        f" {model_args.placeholder_token}\n".join(data["responses"]) + f" {model_args.placeholder_token}",
         add_special_tokens=False,
     )["input_ids"]
 
     # 处理截断，TODO: 截断后的最后一个step可能不完整，同时也不会预测分类
     if len(prompt_token_ids) + len(response_token_ids) > data_args.max_seq_len:
-        prompt_token_ids = prompt_token_ids[-data_args.max_prompt_len:]
+        prompt_token_ids = prompt_token_ids[-data_args.max_prompt_len :]
         if len(prompt_token_ids) + len(response_token_ids) > data_args.max_seq_len:
             max_response_len = data_args.max_seq_len - len(prompt_token_ids)
             response_token_ids = response_token_ids[-max_response_len:]
@@ -240,13 +238,8 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
     for idx, replacement_value in zip(indices, label_token_ids):
         labels[idx] = replacement_value
 
-    prompt_len, seq_len = (
-        len(prompt_token_ids),
-        len(input_ids)
-    )
-    position_ids = (
-        list(range(prompt_len)) + list(range(prompt_len, seq_len))
-    )
+    prompt_len, seq_len = (len(prompt_token_ids), len(input_ids))
+    position_ids = list(range(prompt_len)) + list(range(prompt_len, seq_len))
 
     output_dict = {
         "input_ids": input_ids,
@@ -255,7 +248,7 @@ def preprocess_process_data(data, tokenizer, data_args, model_args):
     }
 
     if model_args.flash_mask:
-        output_dict["attn_mask_startend_row_indices"] = ([seq_len] * seq_len)
+        output_dict["attn_mask_startend_row_indices"] = [seq_len] * seq_len
     else:
         attention_mask = np.tri(seq_len, seq_len, dtype=bool)
         output_dict["attention_mask"] = attention_mask
@@ -337,7 +330,7 @@ def process_collate_fn(batch, pad_token_id=0):
 
     for i, sequence in enumerate(batch):
         difference = max_seq_len - len(sequence["input_ids"])
-        
+
         # input_ids: Tensor(seqL, ); position_ids: list, len(seqL); labels: Tensor(seqL, )
         input_dict["input_ids"].append(sequence["input_ids"].tolist() + [pad_token_id] * difference)
         input_dict["position_ids"].append(sequence["position_ids"] + [pad_token_id] * difference)
@@ -367,4 +360,3 @@ def process_collate_fn(batch, pad_token_id=0):
         else:
             input_dict[key] = np.array(input_dict[key])
     return input_dict
-
