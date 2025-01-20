@@ -53,28 +53,21 @@ class RewardTrainer(Trainer):
         elif "attn_mask_startend_row_indices" in batch:
             rm_inputs["attn_mask_startend_row_indices"] = batch["attn_mask_startend_row_indices"]
 
+        prefix = "eval_" if train_eval == "eval" else ""
+        metrics = {}
         if not self.process_reward:
             loss, chosen_scores, rejected_scores = model(**rm_inputs)
-            prefix = "eval_" if train_eval == "eval" else ""
-            metrics = {}
             metrics[f"{prefix}accuracy"] = (chosen_scores > rejected_scores).astype("float32").mean()
-            for key in metrics:
-                metrics[key] = self._nested_gather(paddle.tile(metrics[key], repeat_times=[1, 1])).mean().cpu()
-            if self.args.should_save:
-                self.store_metrics(metrics, train_eval=train_eval)
-            return loss
         else:
             # PRM Loss
             loss, accs = model(**rm_inputs)
-            prefix = "eval_" if train_eval == "eval" else ""
-            metrics = {}
             metrics[f"{prefix}accuracy"] = accs.astype("float32").mean()
-            for key in metrics:
-                metrics[key] = self._nested_gather(paddle.tile(metrics[key], repeat_times=[1, 1])).mean().cpu()
-            if self.args.should_save:
-                self.store_metrics(metrics, train_eval=train_eval)
-            return loss
-            
+
+        for key in metrics:
+            metrics[key] = self._nested_gather(paddle.tile(metrics[key], repeat_times=[1, 1])).mean().cpu()
+        if self.args.should_save:
+            self.store_metrics(metrics, train_eval=train_eval)
+        return loss
 
     def compute_loss(self, model, inputs):
         """Compute the loss for the given batch of inputs."""
