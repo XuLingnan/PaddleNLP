@@ -14,42 +14,38 @@
 
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any, List, Optional, Tuple, Union
 
 import paddle
 import paddle.nn.functional as F
 from paddle import nn
+
 try:
-    from paddle.distributed.fleet.utils.sequence_parallel_utils import (
-        GatherOp,
-        ScatterOp,
-        mark_as_sequence_parallel_parameter,
-    )
+    from paddle.distributed.fleet.utils.sequence_parallel_utils import GatherOp
 except:
     pass
+
 import paddlenlp
-from paddle.distributed.fleet.meta_parallel import get_rng_state_tracker
 from paddlenlp.transformers import (
+    CausalLMOutputWithCrossAttentions,
+    CausalLMOutputWithPast,
     LlamaConfig,
-    LlamaForCausalLM,
     LlamaLMHead,
     LlamaModel,
     LlamaPretrainedModel,
     LlamaPretrainingCriterion,
-    MistralForCausalLM,
     MistralLMHead,
     MistralModel,
     MistralPreTrainedModel,
     MistralPretrainingCriterion,
     PretrainedConfig,
     PretrainedModel,
-    parallel_matmul,
 )
 from paddlenlp.transformers.conversion_utils import (
     StateDictNameMapping,
     init_name_mappings,
 )
-from paddlenlp.utils.tools import get_env_device
+from paddlenlp.utils.log import logger
 
 
 class LlamaModelForScore(LlamaPretrainedModel):
@@ -167,7 +163,9 @@ class LlamaModelForScore(LlamaPretrainedModel):
 class LlamaModelForPRM(LlamaPretrainedModel):
     _keys_to_ignore_on_load_missing = ["lm_head.weight"]
 
-    def __init__(self, config: PretrainedConfig, placeholder_token_id: int, reward_token_ids: List, **kwargs: Any) -> None:
+    def __init__(
+        self, config: PretrainedConfig, placeholder_token_id: int, reward_token_ids: List, **kwargs: Any
+    ) -> None:
         super().__init__(config)
         self.config = config
         self.llama = LlamaModel(config)
@@ -306,12 +304,12 @@ class LlamaModelForPRM(LlamaPretrainedModel):
         logits = logits[..., self.reward_token_ids]
         for idx, token in enumerate(self.reward_token_ids):
             labels = paddle.where(labels == token, idx, labels)
-        
+
         loss = self.loss(logits, labels)
 
         if labels.dtype == logits.dtype:
             labels = labels.argmax(dim=-1)
-        acc = (logits.argmax(axis=-1) == labels).astype('float32').mean()
+        acc = (logits.argmax(axis=-1) == labels).astype("float32").mean()
 
         return loss, acc
 
@@ -437,7 +435,6 @@ class MistralModelForPRM(MistralPreTrainedModel):
 
         logits = self.lm_head(hidden_states)
 
-
         placeholder_mask = input_ids == self.placeholder_token_id
         logits = logits[placeholder_mask]
         labels = labels[placeholder_mask]
@@ -445,12 +442,12 @@ class MistralModelForPRM(MistralPreTrainedModel):
         logits = logits[..., self.reward_token_ids]  # TODO: 暂时在这边取
         for idx, token in enumerate(self.reward_token_ids):
             labels = paddle.where(labels == token, idx, labels)
-        
+
         loss = self.loss(logits, labels)
 
         if labels.dtype == logits.dtype:
             labels = labels.argmax(dim=-1)
-        acc = (logits.argmax(axis=-1) == labels).astype('float32').mean()
+        acc = (logits.argmax(axis=-1) == labels).astype("float32").mean()
 
         return loss, acc
 
@@ -458,4 +455,3 @@ class MistralModelForPRM(MistralPreTrainedModel):
 paddlenlp.transformers.LlamaModelForScore = LlamaModelForScore
 paddlenlp.transformers.LlamaModelForPRM = LlamaModelForPRM
 paddlenlp.transformers.MistralModelForPRM = MistralModelForPRM
-
