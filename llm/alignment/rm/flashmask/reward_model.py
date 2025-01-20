@@ -27,8 +27,6 @@ except:
 
 import paddlenlp
 from paddlenlp.transformers import (
-    CausalLMOutputWithCrossAttentions,
-    CausalLMOutputWithPast,
     LlamaConfig,
     LlamaLMHead,
     LlamaModel,
@@ -44,6 +42,10 @@ from paddlenlp.transformers import (
 from paddlenlp.transformers.conversion_utils import (
     StateDictNameMapping,
     init_name_mappings,
+)
+from paddlenlp.transformers.model_outputs import (
+    CausalLMOutputWithCrossAttentions,
+    CausalLMOutputWithPast,
 )
 from paddlenlp.utils.log import logger
 
