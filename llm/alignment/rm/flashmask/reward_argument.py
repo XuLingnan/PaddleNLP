@@ -99,6 +99,6 @@ class ModelArgument:
         metadata={"help": "placeholder_token"},
     )
     reward_tokens: str = field(
-        default="+, -",
+        default="+,-",
         metadata={"help": "reward_tokens, string separated by comma."},
     )
